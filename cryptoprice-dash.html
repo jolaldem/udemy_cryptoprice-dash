@@ -1,22 +1,101 @@
 <link rel="import" href="bower_components/polymer/polymer-element.html">
 <link rel="import" href="bower_components/iron-ajax/iron-ajax.html">
 <link rel="import" href="bower_components/polymer/lib/utils/render-status.html">
-<link rel="import" href="bower_components/paper-spinner/paper-spinner.html">
+<link rel="import" href="bower_components/paper-spinner/paper-spinner-lite.html">
+<link rel="import" href="bower_components/paper-button/paper-button.html">
+<link rel="import" href="bower_components/paper-styles/typography.html">
+<link rel="import" href="bower_components/iron-flex-layout/iron-flex-layout.html">
+<link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
+
+<script src="bower_components/chart.js/dist/Chart.js"></script>
+<script src="bower_components/moment/min/moment.min.js"></script>
+
 
 <dom-module id="cryptoprice-dash">
     <template>
-        <h2>Hello world!</h2>
+        <style>
+            :host {
+               display: block;
+               font-family: 'Roboto';
+
+               --paper-cryptocurrency-primary-text-color: #0667D0;
+           }
+
+           h2 {
+               color: #0667D0;
+               @apply --layout-horizontal;
+               @apply --layout-center-center;
+           }
+
+           a {
+               color: #0667D0;
+               text-decoration: none;
+           }
+
+           .content {
+               margin-bottom: 20px;
+               padding: 0 16px;
+               @apply --layout-horizontal;
+               @apply --layout-center-center;
+           }
+
+           .header {
+               @apply --layout-horizontal;
+               @apply --layout-center;
+           }
+
+           .currency {
+               /*@apply --paper-font-headline;*/
+               @apply --paper-font-common-nowrap;
+               color: var(--paper-cryptocurrency-primary-text-color);
+               font-weight: 300;
+           }
+
+           paper-spinner-lite {
+               /*@apply --layout-fit;*/
+               display: none;
+               margin: auto;
+               z-index: 2;
+               height: 70px;
+               width: 70px;
+               --paper-spinner-color: var(--paper-cryptocurrency-spinner-color, #2196F3);
+               --paper-spinner-stroke-width: var(--paper-cryptocurrency-spinner-width, 5px);
+               @apply --paper-cryptocurrency-spinner;
+           }
+
+           paper-spinner-lite[active] {
+               display: block;
+           }
+
+           .lineChart {
+               width: 100%
+           }
+        </style>
+        <h2>CryptoCurrency Price</h2>
         <iron-ajax id="coinbase"
                    handle-as="json"
                    on-response="_handleResponse"
                    loading="{{loading}}">
         </iron-ajax>
 
-        <paper-spinner active="[[loading]]"></paper-spinner>
+        <paper-spinner-lite active="[[loading]]"></paper-spinner-lite>
+
         <div hidden$="[[loading]]">
-            <template is="dom-repeat" items="[[currencies]]">
-                <p>[[item.code]] - [[item.name]] - $[[item.price]]</p>
-            </template>
+            <div class="content">
+                <div class="header">
+                    <template is="dom-repeat" items="[[currencies]]">
+                        <div class="currency">
+                            <paper-button noink on-click="_getCurrencyHistoricData" data-item$="[[item.code]]">
+                                [[item.name]] - $[[item.price]]
+                            </paper-button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <div hidden$="[[loading]]" style="width: 100%; max-width: 700px; margin: 0 auto;" >
+            <canvas height="2" width="4" id="canvas"></canvas>
         </div>
 
     </template>
@@ -51,6 +130,9 @@
                         type: Boolean,
                         notify: true,
                         value: false
+                    },
+                    myLineChart: {
+
                     }
                 }
             }
@@ -61,7 +143,7 @@
                     //https://www.coinbase.com/api/v2/prices/BTC-USD/spot?
                     this._getCurrencyData();
                     //https://www.coinbase.com/api/v2/prices/BTC-USD/historic?period=month
-                    this._getCurrencyHistoricData(this.currencies[0].code);
+                    this._getCurrencyHistoricData(undefined,this.currencies[0].code);
                 })
             }
 
@@ -74,7 +156,13 @@
                 }, this);
             }
 
-            _getCurrencyHistoricData(currency) {
+            _getCurrencyHistoricData(event,currency) {
+                /*console.log("CURRENCY:" + currency);
+                console.log("EVENT:" + event);
+                console.log(event.target.dataset.item);*/
+                if(event !== undefined) {
+                    currency = event.target.dataset.item;
+                }
                 var ajax = this.$.coinbase;
                 ajax.url = 'https://www.coinbase.com/api/v2/prices/' + currency + '-USD/historic?period=week';
                 ajax.generateRequest();
@@ -86,7 +174,7 @@
                     this._computeCurrencyPrice(data);
                 }
                 else {
-                    console.log(response);
+                    this._computeGraph(data);
                 }
                 //console.log(response);
                 //this._computeCurrencyPrice(response.detail);
@@ -105,6 +193,65 @@
                 var index = this.currencies.map(function (e) { return e.code; }).indexOf(code);
                 this.set('currencies.' + index + '.price', data.response.data.amount);
 
+            }
+
+            _computeGraph(data) {
+                var code = data.url.substring(39,42);
+                var label = [];
+                var price = [];
+                data.response.data.prices.forEach( function (element) {
+                    //label.push(element.time);
+                    label.push(this._computeDateTime(element.time));
+                    price.push(element.price);
+                }, this);
+                this._generateLineChart(label,price,code);
+            }
+
+            _computeDateTime(datestring) {
+                if(datestring) {
+                    return moment(datestring, "YYY-MM-DDThh:mm:aaZ").format('M/DD/YYYY h:mm a')
+                }
+                return datestring;
+            }
+
+            _generateLineChart(label,price,labelName) {
+                if(this.myLineChart != undefined) this.myLineChart.destroy();
+                var ctx = this.$.canvas.getContext('2d');
+                this.myLineChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: label.reverse(),
+                        datasets: [
+                             {
+                                 pointRadius: 0,
+                                 label: labelName,
+                                 backgroundColor: "rgba(11, 124, 186, 0.1)",
+                                 borderColor: "rgba(111, 124, 186, 1)",
+                                 borderWith: 2,
+                                 data: price.reverse()
+                             }
+                        ]
+                    },
+                    options: {
+                        animation: false,
+                        tooltips: {
+                            mode: 'indez',
+                            intersect: false
+                        },
+                        scales: {
+                            xAxes: [{
+                                gridLines: {
+                                    display: false
+                                }
+                            }],
+                            yAxes:[{
+                                gridLines: {
+                                    display:false
+                                }
+                            }]
+                        }
+                    }
+                });
             }
         }
         window.customElements.define(CryptopriceDash.is, CryptopriceDash);
